@@ -11,6 +11,7 @@
  */
 
 import { Centrifuge, type Subscription } from "centrifuge";
+import WebSocket from "ws";
 import { parseArgs } from "util";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -152,10 +153,15 @@ async function api<T>(
   return res.json() as Promise<T>;
 }
 
-const getMe = (cfg: Config) => api<User>(cfg, "/users/@me");
+const getMe = async (cfg: Config) => {
+  const res = await api<{ data: User } | User>(cfg, "/users/@me");
+  return "data" in res ? res.data : res;
+};
 
-const getServerChannels = (cfg: Config, serverId: string) =>
-  api<{ data: Channel[] }>(cfg, `/servers/${serverId}/channels`);
+const getServerChannels = async (cfg: Config, serverId: string) => {
+  const res = await api<{ data: Channel[] }>(cfg, `/servers/${serverId}/channels`);
+  return res.data;
+};
 
 const getEventToken = (cfg: Config, channels: string[], ttl = 300) =>
   api<TokenResponse>(
@@ -340,6 +346,20 @@ function processEvent(
   }
 }
 
+// ── Dedup Tracker ───────────────────────────────────────────────────────────
+
+const recentEvents = new Set<string>();
+
+function isDuplicate(evt: ProcessedEvent): boolean {
+  // Dedup key: event type + author + first 50 chars of preview
+  const key = `${evt.event}:${evt.author}:${evt.preview.slice(0, 50)}`;
+  if (recentEvents.has(key)) return true;
+  recentEvents.add(key);
+  // Clean up after 5 seconds
+  setTimeout(() => recentEvents.delete(key), 5000);
+  return false;
+}
+
 // ── Cooldown Tracker ────────────────────────────────────────────────────────
 
 const lastWake = new Map<string, number>(); // channel → timestamp ms
@@ -411,8 +431,9 @@ async function main() {
   const me = await getMe(cfg);
   log(`agent: ${me.name} (${me.id})`);
 
-  // 2. Get server channels
-  const { data: channels } = await getServerChannels(cfg, cfg.serverId);
+  // 2. Get server channels (skip DM channels)
+  const allChannels = await getServerChannels(cfg, cfg.serverId);
+  const channels = allChannels.filter((ch) => ch.type !== "dm");
   for (const ch of channels) {
     channelNames.set(ch.id, `#${ch.name}`);
   }
@@ -434,9 +455,15 @@ async function main() {
   );
 
   // 5. Connect to Centrifugo
-  const client = new Centrifuge(tok.websocket_endpoint, {
+  // The token endpoint returns the uni_websocket URL, but the centrifuge-js
+  // client uses the bidirectional protocol. Replace uni_websocket → websocket.
+  const wsEndpoint = tok.websocket_endpoint.replace(
+    "/uni_websocket",
+    "/websocket",
+  );
+  const client = new Centrifuge(wsEndpoint, {
     token: tok.token,
-    websocket: WebSocket,
+    websocket: WebSocket as any,
     getToken: async () => {
       const newTok = await getEventToken(
         cfg,
@@ -454,6 +481,7 @@ async function main() {
       const envelope = ctx.data as Envelope;
       const evt = processEvent(envelope, me.id, channel);
       if (!evt) return;
+      if (isDuplicate(evt)) return;
 
       // Always emit JSON line to stdout
       const jsonLine = JSON.stringify({
@@ -528,7 +556,7 @@ async function main() {
   // 6. Periodic channel refresh
   const refreshTimer = setInterval(async () => {
     try {
-      const { data: freshChannels } = await getServerChannels(
+      const freshChannels = await getServerChannels(
         cfg,
         cfg.serverId,
       );
