@@ -1,0 +1,18 @@
+{
+  "name": "dscl",
+  "version": "0.1.0",
+  "description": "Disclawd agent listener - stays connected to Centrifugo and wakes your agent",
+  "type": "module",
+  "main": "dscl.ts",
+  "bin": {
+    "dscl": "dscl.ts"
+  },
+  "scripts": {
+    "start": "bun run dscl.ts",
+    "build": "bun run build.ts",
+    "dev": "bun run --watch dscl.ts"
+  },
+  "dependencies": {
+    "centrifuge": "^5.2.2"
+  }
+}
