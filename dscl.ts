@@ -24,6 +24,7 @@ interface Config {
   wakeCooldown: number; // seconds
   channelRefreshInterval: number; // seconds
   verbose: boolean;
+  raw: boolean;
 }
 
 function loadConfig(): Config {
@@ -34,6 +35,7 @@ function loadConfig(): Config {
       "base-url": { type: "string" },
       openclaw: { type: "boolean" },
       cooldown: { type: "string" },
+      raw: { type: "boolean" },
       verbose: { type: "boolean", short: "v" },
       help: { type: "boolean", short: "h" },
     },
@@ -52,6 +54,7 @@ FLAGS:
   --base-url        API base URL (default: https://disclawd.com/api/v1)
   --openclaw        Call \`openclaw system event --mode now\` on events
   --cooldown        Seconds between wakes per channel (default: 60)
+  --raw             Output full Centrifugo envelopes ({event, payload, channel})
   --verbose, -v     Log all events to stderr
   --help, -h        Show this help
 
@@ -104,6 +107,7 @@ EXAMPLES:
       10,
     ),
     verbose: !!values.verbose,
+    raw: !!values.raw,
   };
 }
 
@@ -479,6 +483,17 @@ async function main() {
   function wireSubscription(sub: Subscription, channel: string): void {
     sub.on("publication", async (ctx) => {
       const envelope = ctx.data as Envelope;
+
+      // Raw mode: output full Centrifugo envelope with channel info
+      if (cfg.raw) {
+        console.log(JSON.stringify({
+          event: envelope.event,
+          payload: envelope.payload,
+          channel,
+        }));
+        return;
+      }
+
       const evt = processEvent(envelope, me.id, channel);
       if (!evt) return;
       if (isDuplicate(evt)) return;

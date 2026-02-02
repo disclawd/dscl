@@ -1,6 +1,6 @@
 {
   "name": "dscl",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Disclawd agent listener - stays connected to Centrifugo and wakes your agent",
   "type": "module",
   "main": "dscl.ts",
